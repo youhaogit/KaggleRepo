@@ -11,14 +11,16 @@ from tensorflow.contrib import learn
 import pandas as pd
 
 # Parameters
-# ==================================================
+MAX_NB_WORDS = 100000
+EMBEDDING_FILE = 'glove.840B.300d.txt'
+EMBEDDING_DIM = 300
 
 # Data loading params
 tf.flags.DEFINE_float("dev_sample_percentage", .1, "Percentage of the training data to use for validation")
 tf.flags.DEFINE_string("data_dir", "data", "Data directory.")
 
 # Model Hyperparameters
-tf.flags.DEFINE_integer("embedding_dim", 128, "Dimensionality of character embedding (default: 128)")
+tf.flags.DEFINE_integer("embedding_dim", 300, "Dimensionality of character embedding (default: 128)")
 tf.flags.DEFINE_string("filter_sizes", "3,4,5", "Comma-separated filter sizes (default: '3,4,5')")
 tf.flags.DEFINE_integer("num_filters", 128, "Number of filters per filter size (default: 128)")
 tf.flags.DEFINE_float("dropout_keep_prob", 0.5, "Dropout keep probability (default: 0.5)")
@@ -41,38 +43,51 @@ for attr, value in sorted(FLAGS.__flags.items()):
     print("{}={}".format(attr.upper(), value))
 print("")
 
-
-# Data Preparation
-# ==================================================
-
 # Load data
 print("Loading data...")
 train_df = pd.read_csv(os.path.join(FLAGS.data_dir, 'train.csv'))
 test_df = pd.read_csv(os.path.join(FLAGS.data_dir, 'test.csv'))
-train_data, train_label, test_data = data_helpers.text2sequence(train_df, test_df)
-
-# Build vocabulary
-max_document_length = max([len(x.split(" ")) for x in x_text])
-vocab_processor = learn.preprocessing.VocabularyProcessor(max_document_length)
-x = np.array(list(vocab_processor.fit_transform(x_text)))
+train_data, train_label, word_index = data_helpers.text2sequence(train_df)
+# test_data, _ = data_helpers.text2sequence(test_df)
 
 # Randomly shuffle data
 np.random.seed(10)
-shuffle_indices = np.random.permutation(np.arange(len(y)))
-x_shuffled = x[shuffle_indices]
-y_shuffled = y[shuffle_indices]
+shuffle_indices = np.random.permutation(np.arange(len(train_label)))
+x_shuffled = train_data[shuffle_indices]
+y_shuffled = train_label[shuffle_indices]
 
 # Split train/test set
 # TODO: This is very crude, should use cross-validation
-dev_sample_index = -1 * int(FLAGS.dev_sample_percentage * float(len(y)))
+dev_sample_index = -1 * int(FLAGS.dev_sample_percentage * float(len(train_label)))
 x_train, x_dev = x_shuffled[:dev_sample_index], x_shuffled[dev_sample_index:]
 y_train, y_dev = y_shuffled[:dev_sample_index], y_shuffled[dev_sample_index:]
 
-del x, y, x_shuffled, y_shuffled
+del train_data, train_label, x_shuffled, y_shuffled
 
-print("Vocabulary Size: {:d}".format(len(vocab_processor.vocabulary_)))
+# print("Vocabulary Size: {:d}".format(len(vocab_processor.vocabulary_)))
 print("Train/Dev split: {:d}/{:d}".format(len(y_train), len(y_dev)))
 
+embeddings_index = {}
+
+f = open(EMBEDDING_FILE, "rb")
+for line in f:
+    values = line.split()
+    word = values[0]
+    coefs = np.asarray(values[1:], dtype='float32')
+    embeddings_index[word] = coefs
+f.close()
+
+# embeddings_index 是通过glove预训练词向量构造的一个字典，每个单词都有一个对应的300维度的词向量,词向量来源于glove的
+# 预训练。接着，我们构造了一个embedding_matrix，只取了排名靠前的10W单词，并且把词向量填充进embedding_matrix。
+nb_words = min(MAX_NB_WORDS, len(word_index))
+embedding_matrix = np.zeros((nb_words, EMBEDDING_DIM))
+for word, i in word_index.items():
+    if i >= MAX_NB_WORDS:
+        continue
+    embedding_vector = embeddings_index.get(str.encode(word))
+    if embedding_vector is not None:
+        # words not found in embedding index will be all-zeros.
+        embedding_matrix[i] = embedding_vector
 
 # Training
 # ==================================================
@@ -86,8 +101,9 @@ with tf.Graph().as_default():
         cnn = TextCNN(
             sequence_length=x_train.shape[1],
             num_classes=y_train.shape[1],
-            vocab_size=len(vocab_processor.vocabulary_),
+            vocab_size=nb_words,
             embedding_size=FLAGS.embedding_dim,
+            init_embedding=embedding_matrix,
             filter_sizes=list(map(int, FLAGS.filter_sizes.split(","))),
             num_filters=FLAGS.num_filters,
             l2_reg_lambda=FLAGS.l2_reg_lambda)
@@ -135,7 +151,7 @@ with tf.Graph().as_default():
         saver = tf.train.Saver(tf.global_variables(), max_to_keep=FLAGS.num_checkpoints)
 
         # Write vocabulary
-        vocab_processor.save(os.path.join(out_dir, "vocab"))
+        # vocab_processor.save(os.path.join(out_dir, "vocab"))
 
         # Initialize all variables
         sess.run(tf.global_variables_initializer())

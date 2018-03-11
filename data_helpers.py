@@ -37,37 +37,30 @@ def text_to_wordlist(text, remove_stopwords=False, stem_words=False):
     return text
 
 
-def text2sequence(train_df, test_df):
-    list_sentences_train = train_df["comment_text"].fillna("NA").values
+def text2sequence(df, isTrain=True):
+    list_sentences = df["comment_text"].fillna("NA").values
     list_classes = ["toxic", "severe_toxic", "obscene", "threat", "insult", "identity_hate"]
-    train_label = train_df[list_classes].values
-    list_sentences_test = test_df["comment_text"].fillna("NA").values
+    label = []
+    if isTrain:
+        label = df[list_classes].values
 
     comments = []
-    for text in list_sentences_train:
+    for text in list_sentences:
         comments.append(text_to_wordlist(text))
 
-    test_comments = []
-    for text in list_sentences_test:
-        test_comments.append(text_to_wordlist(text))
-
     tokenizer = Tokenizer(num_words=MAX_NB_WORDS)
-    tokenizer.fit_on_texts(comments + test_comments)
+    tokenizer.fit_on_texts(comments)
 
     sequences = tokenizer.texts_to_sequences(comments)
-    test_sequences = tokenizer.texts_to_sequences(test_comments)
 
     word_index = tokenizer.word_index
     print('Found %s unique tokens' % len(word_index))
 
-    train_data = pad_sequences(sequences, maxlen=MAX_SEQUENCE_LENGTH)
-    print('Shape of data tensor:', train_data.shape)
-    print('Shape of label tensor:', y.shape)
+    data = pad_sequences(sequences, maxlen=MAX_SEQUENCE_LENGTH)
+    print('Shape of data tensor:', data.shape)
+    print('Shape of label tensor:', label.shape)
 
-    test_data = pad_sequences(test_sequences, maxlen=MAX_SEQUENCE_LENGTH)
-    print('Shape of test_data tensor:', test_data.shape)
-
-    return train_data, train_label, test_data
+    return data, label, word_index
 
 
 def batch_iter(data, batch_size, num_epochs, shuffle=True):
